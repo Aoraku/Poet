@@ -91,6 +91,12 @@ python classifier.py --kind poem --standard all --model all --train_limit 3000 -
 python classifier.py --kind ci --standard all --model all --train_limit 3000 --test_limit 1000 --save
 ```
 
+诗和词一起跑：
+
+```bash
+python classifier.py --kind all --standard all --model all --train_limit 3000 --test_limit 1000 --save
+```
+
 只跑一个标准、一个模型：
 
 ```bash
@@ -116,6 +122,12 @@ python classifier.py --predict --kind ci --cipai 浣溪沙 --model best --standa
 KNN, WKNN, Bayes, SVM, Tree,
 Bagging_KNN, Bagging_WKNN, Bagging_Bayes, Bagging_SVM, Bagging_Tree,
 AdaBoost_Bayes, AdaBoost_SVM, AdaBoost_Tree
+```
+
+分类实验表写到：
+
+```text
+dataset/results/classifier_report.md
 ```
 
 分类输出字段：

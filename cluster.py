@@ -167,10 +167,16 @@ def top_words(data, labels, k):
 
 def run_one(kind, standard, method, split, limit, use_w2v):
     data, y = load_data(split, kind, standard, limit)
+    if len(data) < 3 or len(set(y)) < 2:
+        print(kind, standard, method, "skip", len(data))
+        return None
     x = build_x(data, standard, use_w2v)
     k = k_num(kind, standard)
-    if k > len(data):
-        k = len(data)
+    if k >= len(data):
+        k = len(data) - 1
+    if k < 2:
+        print(kind, standard, method, "skip", len(data))
+        return None
 
     if method == "kmeans":
         labels = run_kmeans(x, k)
@@ -245,7 +251,8 @@ def main():
     for standard in standards:
         for method in methods:
             res = run_one(args.kind, standard, method, args.split, args.limit, args.use_w2v)
-            results.append(res)
+            if res:
+                results.append(res)
     write_summary(args.kind, results)
 
 

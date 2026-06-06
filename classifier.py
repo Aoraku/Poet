@@ -17,7 +17,7 @@ import config
 
 
 RANDOM_SEED = 42
-REPORT_FILE = os.path.join(config.BASE_DIR, "report.md")
+REPORT_FILE = os.path.join(config.RESULT_DIR, "classifier_report.md")
 CLS_DIR = os.path.join(config.MODEL_DIR, "classifiers")
 
 BEST = {
@@ -91,12 +91,12 @@ def trans_x(data, vec, tfidf, use_w2v):
     return hstack([x1, x2])
 
 
-def build_knn():
-    return KNeighborsClassifier(n_neighbors=7, metric="cosine")
+def build_knn(n=7):
+    return KNeighborsClassifier(n_neighbors=n, metric="cosine")
 
 
-def build_wknn():
-    return KNeighborsClassifier(n_neighbors=7, weights="distance", metric="cosine")
+def build_wknn(n=7):
+    return KNeighborsClassifier(n_neighbors=n, weights="distance", metric="cosine")
 
 
 def build_bayes():
@@ -111,18 +111,21 @@ def build_tree():
     return DecisionTreeClassifier(max_depth=30, min_samples_leaf=5, random_state=RANDOM_SEED)
 
 
-def base_models():
+def base_models(n_train=7):
+    n = min(7, n_train)
+    if n < 1:
+        n = 1
     return {
-        "KNN": build_knn(),
-        "WKNN": build_wknn(),
+        "KNN": build_knn(n),
+        "WKNN": build_wknn(n),
         "Bayes": build_bayes(),
         "SVM": build_svm(),
         "Tree": build_tree(),
     }
 
 
-def build_models():
-    base = base_models()
+def build_models(n_train=7):
+    base = base_models(n_train)
     models = dict(base)
     for name, model in base.items():
         models["Bagging_" + name] = BaggingClassifier(
@@ -175,7 +178,7 @@ def train_pack(kind, standard, model_name, train_limit, use_w2v):
     model_name = pick_model(model_name, standard)
     train, y_train = get_xy("train", kind, standard, train_limit)
     x_train, vec, tfidf = fit_x(train, use_w2v)
-    model = build_models()[model_name]
+    model = build_models(len(train))[model_name]
     model.fit(x_train, y_train)
     return {
         "kind": kind,
@@ -209,9 +212,12 @@ def load_pack(kind, standard, model_name, train_limit, use_w2v):
 def run_one(kind, standard, model_name, train_limit, test_limit, use_w2v, save):
     train, y_train = get_xy("train", kind, standard, train_limit)
     test, y_test = get_xy("test", kind, standard, test_limit)
+    if len(set(y_train)) < 2 or len(set(y_test)) < 1:
+        print(kind, standard, "skip", len(train), len(test))
+        return []
     x_train, vec, tfidf = fit_x(train, use_w2v)
     x_test = trans_x(test, vec, tfidf, use_w2v)
-    models = build_models()
+    models = build_models(len(train))
     names = list(models.keys()) if model_name == "all" else [pick_model(model_name, standard)]
 
     rows = []
@@ -239,6 +245,7 @@ def run_one(kind, standard, model_name, train_limit, test_limit, use_w2v, save):
 
 
 def write_report(rows, train_limit, test_limit, use_w2v):
+    config.mkdir(config.RESULT_DIR)
     with open(REPORT_FILE, "w", encoding="utf-8") as f:
         f.write("# 分类实验报告\n\n")
         f.write("true label 只读取 dataset/llm_labels，由大模型逐条阅读后填写。\n\n")
@@ -271,7 +278,7 @@ def pred_text(kind, text, cipai="", standards=None, model_name="best", train_lim
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--kind", default="poem", choices=["poem", "ci"])
+    parser.add_argument("--kind", default="poem", choices=["all", "poem", "ci"])
     parser.add_argument("--standard", default="all")
     parser.add_argument("--model", default="all")
     parser.add_argument("--train_limit", type=int, default=3000)
@@ -284,28 +291,40 @@ def main():
     args = parser.parse_args()
 
     label_need()
-    if args.standard == "all":
-        standards = config.kind_std(args.kind)
-    else:
-        standards = [args.standard]
 
     if args.predict:
+        if args.kind == "all":
+            print("predict 必须选择 poem 或 ci")
+            raise SystemExit(1)
+        if args.standard == "all":
+            standards = config.kind_std(args.kind)
+        else:
+            standards = [args.standard]
         ans = pred_text(args.kind, args.text, args.cipai, standards, args.model, args.train_limit, args.use_w2v)
         for k, v in ans.items():
             print(k, v["model"], v["label"])
         return
 
+    kinds = [args.kind]
+    if args.kind == "all":
+        kinds = ["poem", "ci"]
+
     rows = []
-    for standard in standards:
-        rows += run_one(
-            args.kind,
-            standard,
-            args.model,
-            args.train_limit,
-            args.test_limit,
-            args.use_w2v,
-            args.save,
-        )
+    for kind in kinds:
+        if args.standard == "all":
+            standards = config.kind_std(kind)
+        else:
+            standards = [args.standard]
+        for standard in standards:
+            rows += run_one(
+                kind,
+                standard,
+                args.model,
+                args.train_limit,
+                args.test_limit,
+                args.use_w2v,
+                args.save,
+            )
     write_report(rows, args.train_limit, args.test_limit, args.use_w2v)
 
 
