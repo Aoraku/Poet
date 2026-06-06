@@ -1,0 +1,278 @@
+import json
+import os
+from collections import Counter
+
+from label import CI_STYLE, EMOTION, FESTIVAL, SEASON, STYLE, THEME
+from label import only_ch, rhyme_label, split_line, tone_label
+
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "dataset")
+POEM_DIR = os.path.join(DATA_DIR, "poems")
+LABEL_DIR = os.path.join(DATA_DIR, "labels")
+MODEL_DIR = os.path.join(DATA_DIR, "models")
+RESULT_DIR = os.path.join(DATA_DIR, "results")
+TONE_FILE = os.path.join(DATA_DIR, "tone", "char_tone.json")
+CIPAI_FILE = os.path.join(DATA_DIR, "rhyme", "cipai_len.json")
+
+RANDOM_SEED = 42
+
+CATEGORY = {
+    "theme": THEME,
+    "season": SEASON,
+    "festival": FESTIVAL,
+    "emotion": EMOTION,
+    "style": STYLE,
+    "ci_style": CI_STYLE,
+}
+
+# 人工权重
+POEM_WEIGHT = {
+    "theme": 2.2,
+    "season": 1.4,
+    "festival": 1.8,
+    "emotion": 2.0,
+    "style": 1.7,
+    "form": 1.2,
+    "rhyme": 0.8,
+    "author": 0.6,
+}
+
+CI_WEIGHT = {
+    "theme": 2.0,
+    "season": 1.2,
+    "festival": 1.6,
+    "emotion": 2.0,
+    "style": 1.3,
+    "ci_style": 2.2,
+    "cipai": 1.7,
+    "form": 1.4,
+    "rhyme": 0.7,
+    "author": 0.8,
+}
+
+FORM_NAMES = [
+    "五言绝句", "七言绝句", "五言律诗", "七言律诗",
+    "古体长篇", "杂言乐府", "其他", "小令", "中调", "长调",
+]
+
+COMMON_CIPAI = [
+    "水调歌头", "满江红", "念奴娇", "沁园春", "贺新郎", "鹧鸪天",
+    "浣溪沙", "蝶恋花", "临江仙", "菩萨蛮", "西江月", "清平乐",
+    "虞美人", "江城子", "卜算子", "如梦令", "声声慢", "雨霖铃",
+    "永遇乐", "摸鱼儿", "踏莎行", "渔家傲", "南乡子", "点绛唇",
+]
+
+# 作者先验
+AUTHOR_THEME = {
+    "王维": "山水田园",
+    "孟浩然": "山水田园",
+    "岑参": "边塞征战",
+    "高适": "边塞征战",
+    "王昌龄": "边塞征战",
+    "杜甫": "忧国民生",
+    "白居易": "忧国民生",
+    "陆游": "忧国民生",
+    "辛弃疾": "忧国民生",
+    "柳永": "爱情闺怨",
+    "李清照": "爱情闺怨",
+    "苏轼": "哲理咏怀",
+}
+
+AUTHOR_STYLE = {
+    "李白": "飘逸旷达",
+    "杜甫": "沉郁悲慨",
+    "王维": "冲淡闲远",
+    "孟浩然": "清新自然",
+    "韩愈": "劲健洗炼",
+    "李商隐": "含蓄委曲",
+    "杜牧": "高古典雅",
+    "苏轼": "豪放慷慨",
+    "辛弃疾": "豪放慷慨",
+    "柳永": "婉约清丽",
+    "李清照": "婉约清丽",
+    "姜夔": "清空骚雅",
+    "周邦彦": "典雅工丽",
+}
+
+
+def mkdir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+
+def load_json(path):
+    if not os.path.exists(path):
+        return {}
+    return json.load(open(path, "r", encoding="utf-8"))
+
+
+def load_jsonl(path, limit=0):
+    data = []
+    for line in open(path, "r", encoding="utf-8"):
+        data.append(json.loads(line))
+        if limit and len(data) >= limit:
+            break
+    return data
+
+
+def save_json(path, data):
+    mkdir(os.path.dirname(path))
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def cut(num, max_num):
+    if max_num == 0:
+        return 0
+    v = num / max_num
+    if v > 1:
+        return 1
+    return v
+
+
+def word_scores(text, table):
+    raw = {}
+    for name, words in table.items():
+        s = 0.0
+        for w in words:
+            c = text.count(w)
+            if c:
+                if len(w) == 1:
+                    s += c * 0.6
+                else:
+                    s += c * (1.3 + 0.2 * len(w))
+        raw[name] = s
+    m = max(raw.values()) if raw else 0
+    if m == 0:
+        return {k: 0 for k in raw}
+    return {k: raw[k] / m for k in raw}
+
+
+def add_words(feat, text, key, weight):
+    table = CATEGORY[key]
+    scores = word_scores(text, table)
+    for name, val in scores.items():
+        feat[key + "_" + name] = val * weight
+
+
+def form_name(x):
+    if x["kind"] == "song_ci":
+        total = len(only_ch(x["content"]))
+        if total <= 58:
+            return "小令"
+        if total <= 90:
+            return "中调"
+        return "长调"
+
+    lines = split_line(x["content"])
+    lens = [len(a) for a in lines if a]
+    if not lens:
+        return "其他"
+    common = Counter(lens).most_common(1)[0][0]
+    ratio = lens.count(common) / len(lens)
+    if ratio < 0.65:
+        return "杂言乐府"
+    if len(lines) == 4 and common == 5:
+        return "五言绝句"
+    if len(lines) == 4 and common == 7:
+        return "七言绝句"
+    if len(lines) == 8 and common == 5:
+        return "五言律诗"
+    if len(lines) == 8 and common == 7:
+        return "七言律诗"
+    if len(lines) > 8:
+        return "古体长篇"
+    return "其他"
+
+
+def add_form(feat, x, weight):
+    name = form_name(x)
+    for form in FORM_NAMES:
+        feat["form_" + form] = weight if form == name else 0
+
+    lines = split_line(x["content"])
+    lens = [len(a) for a in lines if a]
+    total = len(only_ch(x["content"]))
+    avg_len = sum(lens) / len(lens) if lens else 0
+    feat["num_char"] = cut(total, 220)
+    feat["num_line"] = cut(len(lines), 40)
+    feat["avg_len"] = cut(avg_len, 14)
+    feat["five_ratio"] = lens.count(5) / len(lens) if lens else 0
+    feat["seven_ratio"] = lens.count(7) / len(lens) if lens else 0
+
+
+def add_rhyme(feat, x, tone_data, weight):
+    lines = split_line(x["content"])
+    last = lines[-1][-1] if lines else ""
+    rhyme = rhyme_label(last)
+    tone = tone_label(last, tone_data)
+    if rhyme != "N/A":
+        feat["rhyme_" + rhyme] = weight
+    if tone != "N/A":
+        feat["tone_" + tone] = weight
+
+
+def add_author(feat, x, weight):
+    author = x.get("author", "")
+    if author in AUTHOR_THEME:
+        feat["author_theme_" + AUTHOR_THEME[author]] = weight
+    if author in AUTHOR_STYLE:
+        feat["author_style_" + AUTHOR_STYLE[author]] = weight
+
+
+def add_cipai(feat, x, weight):
+    name = x.get("cipai", "") or x.get("title", "")
+    for cipai in COMMON_CIPAI:
+        feat["cipai_" + cipai] = weight if name == cipai else 0
+
+    data = load_json(CIPAI_FILE)
+    pattern = data.get(name, {}).get("pattern", [])
+    feat["cipai_len"] = cut(sum(pattern), 120)
+    feat["cipai_line"] = cut(len(pattern), 20)
+
+
+def poem_feat(x, tone_data=None):
+    tone_data = tone_data or {}
+    text = x.get("title", "") + " " + x.get("author", "") + " " + x.get("content", "")
+    feat = {}
+    add_words(feat, text, "theme", POEM_WEIGHT["theme"])
+    add_words(feat, text, "season", POEM_WEIGHT["season"])
+    add_words(feat, text, "festival", POEM_WEIGHT["festival"])
+    add_words(feat, text, "emotion", POEM_WEIGHT["emotion"])
+    add_words(feat, text, "style", POEM_WEIGHT["style"])
+    add_form(feat, x, POEM_WEIGHT["form"])
+    add_rhyme(feat, x, tone_data, POEM_WEIGHT["rhyme"])
+    add_author(feat, x, POEM_WEIGHT["author"])
+    return feat
+
+
+def ci_feat(x, tone_data=None):
+    tone_data = tone_data or {}
+    text = x.get("title", "") + " " + x.get("cipai", "") + " " + x.get("author", "") + " " + x.get("content", "")
+    feat = {}
+    add_words(feat, text, "theme", CI_WEIGHT["theme"])
+    add_words(feat, text, "season", CI_WEIGHT["season"])
+    add_words(feat, text, "festival", CI_WEIGHT["festival"])
+    add_words(feat, text, "emotion", CI_WEIGHT["emotion"])
+    add_words(feat, text, "style", CI_WEIGHT["style"])
+    add_words(feat, text, "ci_style", CI_WEIGHT["ci_style"])
+    add_form(feat, x, CI_WEIGHT["form"])
+    add_rhyme(feat, x, tone_data, CI_WEIGHT["rhyme"])
+    add_author(feat, x, CI_WEIGHT["author"])
+    add_cipai(feat, x, CI_WEIGHT["cipai"])
+    return feat
+
+
+def build_feat(x, tone_data=None):
+    if x.get("kind") == "song_ci":
+        return ci_feat(x, tone_data)
+    return poem_feat(x, tone_data)
+
+
+def load_split(name, limit=0):
+    poem_path = os.path.join(POEM_DIR, name + ".jsonl")
+    label_path = os.path.join(LABEL_DIR, name + "_labels.jsonl")
+    poems = load_jsonl(poem_path, limit)
+    labels = load_jsonl(label_path, limit)
+    return poems, labels
