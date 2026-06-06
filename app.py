@@ -125,7 +125,8 @@ with tab2:
     show_cluster()
 
 with tab3:
-    kind = st.radio("体裁", ["poem", "ci"], horizontal=True)
+    kind_name = st.radio("体裁", ["诗", "词"], horizontal=True)
+    kind = "ci" if kind_name == "词" else "poem"
     form = st.selectbox("诗体", ["七言绝句", "五言绝句", "七言律诗", "五言律诗"])
     cipai = st.text_input("词牌 ", "浣溪沙" if kind == "ci" else "")
     theme = st.selectbox("题材", [""] + list(config.THEME.keys()))
