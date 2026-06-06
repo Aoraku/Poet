@@ -42,8 +42,8 @@ def text_of(x):
 def k_num(kind, standard):
     if standard == "form":
         if kind == "ci":
-            return 3
-        return 7
+            return len(config.CI_FORMS)
+        return len(config.POEM_FORMS)
     if standard == "ci_style":
         return len(config.CATEGORY["ci_style"])
     if standard in config.CATEGORY:
@@ -66,12 +66,10 @@ def need_key(key, standard):
 
 
 def load_data(split, kind, standard, limit):
-    poems, labels = config.load_split(split, label_dir=config.LLM_DIR)
+    poems, labels = config.load_labeled(split, kind, config.LLM_DIR, 0)
     data = []
     y = []
     for x, lab in zip(poems, labels):
-        if not config.same_kind(x, kind):
-            continue
         yy = lab.get(standard, "")
         if yy == "" or yy == "N/A":
             continue

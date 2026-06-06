@@ -3,7 +3,7 @@ import json
 import os
 
 import config
-from label import rhyme_label, tone_label
+from label import guess_form, rhyme_label, tone_label
 
 
 TODO_DIR = os.path.join(config.DATA_DIR, "llm_todo")
@@ -31,7 +31,7 @@ def empty_lab(x, tone_data):
         "emotion": "",
         "style": "",
         "ci_style": "",
-        "form": config.form_name(x),
+        "form": guess_form(x),
         "rhyme": rhyme_label(last),
         "tone": tone_label(last, tone_data),
     }
@@ -69,12 +69,10 @@ def check_one(split, kind):
     if not os.path.exists(lab_path):
         print(split, kind, "need", need, "have", 0)
         return
-    have = 0
+    poems, labs = config.load_labeled(split, kind, config.LLM_DIR)
+    have = len(labs)
     ok = 0
-    for x in config.load_jsonl(lab_path):
-        if not config.same_kind(x, kind):
-            continue
-        have += 1
+    for x in labs:
         miss = False
         for key in config.kind_std(kind):
             if x.get(key, "") == "":

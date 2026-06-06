@@ -25,11 +25,10 @@ def load_poems(split="train", limit=5000):
 
 
 @st.cache_data
-def load_labs(split="train", limit=5000):
-    path = config.label_path(split, config.LLM_DIR)
-    if not os.path.exists(path):
-        return []
-    return config.load_jsonl(path, limit)
+def load_pair(split="train", kind="poem", limit=5000):
+    if not has_llm():
+        return [], []
+    return config.load_labeled(split, kind, config.LLM_DIR, limit)
 
 
 def has_llm():
@@ -88,21 +87,18 @@ def gen_text(args):
 
 def label_opts(kind, field):
     if field == "form" and kind == "ci":
-        return ["小令", "中调", "长调"]
+        return config.CI_FORMS
     if field == "form":
-        return ["五言绝句", "七言绝句", "五言律诗", "七言律诗", "古体长篇", "杂言乐府", "其他"]
+        return config.POEM_FORMS
     if field in config.CATEGORY:
         return list(config.CATEGORY[field].keys()) + ["N/A"]
     return ["N/A"]
 
 
 def show_book(kind, field, val):
-    poems = load_poems("train", 5000)
-    labs = load_labs("train", 5000)
+    poems, labs = load_pair("train", kind, 5000)
     rows = []
     for x, lab in zip(poems, labs):
-        if not config.same_kind(x, kind):
-            continue
         if val and lab.get(field, "") != val:
             continue
         rows.append({
@@ -122,12 +118,10 @@ def show_book(kind, field, val):
 
 
 def show_count(kind, field):
-    poems = load_poems("train", 5000)
-    labs = load_labs("train", 5000)
+    poems, labs = load_pair("train", kind, 5000)
     cnt = Counter()
     for x, lab in zip(poems, labs):
-        if config.same_kind(x, kind):
-            cnt[lab.get(field, "N/A")] += 1
+        cnt[lab.get(field, "N/A")] += 1
     rows = [{"label": k, "count": v} for k, v in cnt.most_common(30)]
     st.dataframe(rows, use_container_width=True)
 

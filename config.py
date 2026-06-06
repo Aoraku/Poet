@@ -9,8 +9,6 @@ from label import only_ch, rhyme_label, split_line, tone_label
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "dataset")
 POEM_DIR = os.path.join(DATA_DIR, "poems")
-LABEL_DIR = os.path.join(DATA_DIR, "labels")
-RULE_DIR = os.path.join(DATA_DIR, "rule_labels")
 LLM_DIR = os.path.join(DATA_DIR, "llm_labels")
 MODEL_DIR = os.path.join(DATA_DIR, "models")
 RESULT_DIR = os.path.join(DATA_DIR, "results")
@@ -57,10 +55,16 @@ CI_WEIGHT = {
     "author": 0.8,
 }
 
-FORM_NAMES = [
-    "五言绝句", "七言绝句", "五言律诗", "七言律诗",
-    "古体长篇", "杂言乐府", "其他", "小令", "中调", "长调",
+POEM_FORMS = [
+    "五言绝句", "七言绝句", "六言绝句",
+    "五言律诗", "七言律诗", "五言排律", "七言排律",
+    "五言古诗", "七言古诗", "杂言古诗", "古体长篇",
+    "杂言乐府", "其他",
 ]
+
+CI_FORMS = ["小令", "中调", "长调"]
+
+FORM_NAMES = POEM_FORMS + CI_FORMS
 
 COMMON_CIPAI = [
     "水调歌头", "满江红", "念奴娇", "沁园春", "贺新郎", "鹧鸪天",
@@ -177,6 +181,69 @@ def cut(num, max_num):
     if v > 1:
         return 1
     return v
+
+
+def add_count(feat, text, name, words, weight):
+    s = 0
+    for w in words:
+        s += text.count(w)
+    feat[name] = cut(s, 8) * weight
+
+
+def add_shape(feat, x, weight):
+    lines = split_line(x.get("content", ""))
+    lens = [len(a) for a in lines if a]
+    total = len(only_ch(x.get("content", "")))
+    if not lens:
+        return
+    avg = sum(lens) / len(lens)
+    diff = sum(abs(n - avg) for n in lens) / len(lens)
+    feat["shape_char"] = cut(total, 260) * weight
+    feat["shape_line"] = cut(len(lines), 50) * weight
+    feat["shape_avg"] = cut(avg, 15) * weight
+    feat["shape_diff"] = cut(diff, 8) * weight
+    feat["shape_short"] = len([n for n in lens if n <= 4]) / len(lens) * weight
+    feat["shape_long"] = len([n for n in lens if n >= 8]) / len(lens) * weight
+
+
+def add_image(feat, text, weight):
+    add_count(feat, text, "img_time", ["春", "秋", "夕", "夜", "晓", "暮", "年", "岁"], weight)
+    add_count(feat, text, "img_place", ["山", "水", "江", "湖", "楼", "亭", "关", "塞", "宫", "村"], weight)
+    add_count(feat, text, "img_body", ["心", "泪", "眉", "鬓", "梦", "魂", "愁", "恨"], weight)
+    add_count(feat, text, "img_color", ["红", "绿", "青", "白", "黄", "翠", "碧", "金", "玉"], weight)
+    add_count(feat, text, "img_war", ["兵", "戈", "剑", "马", "胡", "虏", "烽", "战", "戍"], weight)
+    add_count(feat, text, "img_wine", ["酒", "杯", "醉", "酌", "宴", "歌", "舞"], weight)
+
+
+def add_tone_stat(feat, x, tone_data, weight):
+    lines = split_line(x.get("content", ""))
+    ping = 0
+    ze = 0
+    ends = []
+    for line in lines:
+        if not line:
+            continue
+        ends.append(line[-1])
+        for ch in line:
+            t = tone_label(ch, tone_data)
+            if t == "平":
+                ping += 1
+            if t == "仄":
+                ze += 1
+    total = ping + ze
+    if total:
+        feat["tone_ping"] = ping / total * weight
+        feat["tone_ze"] = ze / total * weight
+    rhymes = [rhyme_label(ch) for ch in ends if rhyme_label(ch) != "N/A"]
+    if rhymes:
+        cnt = Counter(rhymes)
+        feat["rhyme_same"] = cnt.most_common(1)[0][1] / len(rhymes) * weight
+
+
+def add_author_name(feat, x, weight):
+    author = x.get("author", "")
+    for name in ["李白", "杜甫", "白居易", "王维", "苏轼", "陆游", "辛弃疾", "柳永", "李清照"]:
+        feat["author_" + name] = weight if author == name else 0
 
 
 def word_scores(text, table):
@@ -316,6 +383,10 @@ def poem_feat(x, tone_data=None, w2v=None):
     add_form(feat, x, POEM_WEIGHT["form"])
     add_rhyme(feat, x, tone_data, POEM_WEIGHT["rhyme"])
     add_author(feat, x, POEM_WEIGHT["author"])
+    add_author_name(feat, x, 0.5)
+    add_shape(feat, x, 1.2)
+    add_image(feat, text, 1.4)
+    add_tone_stat(feat, x, tone_data, 1.0)
     add_w2v(feat, x, w2v)
     return feat
 
@@ -334,6 +405,10 @@ def ci_feat(x, tone_data=None, w2v=None):
     add_rhyme(feat, x, tone_data, CI_WEIGHT["rhyme"])
     add_author(feat, x, CI_WEIGHT["author"])
     add_cipai(feat, x, CI_WEIGHT["cipai"])
+    add_author_name(feat, x, 0.7)
+    add_shape(feat, x, 1.6)
+    add_image(feat, text, 1.5)
+    add_tone_stat(feat, x, tone_data, 0.9)
     add_w2v(feat, x, w2v)
     return feat
 
@@ -354,8 +429,40 @@ def load_labels(name, label_dir=None, limit=0):
     return load_jsonl(path, limit)
 
 
+def label_map(name, label_dir=None):
+    labels = load_labels(name, label_dir)
+    by_id = {}
+    by_index = {}
+    for x in labels:
+        if x.get("id", ""):
+            by_id[x["id"]] = x
+        if "index" in x:
+            by_index[int(x["index"])] = x
+    return by_id, by_index
+
+
 def load_split(name, limit=0, label_dir=None):
     poem_path = os.path.join(POEM_DIR, name + ".jsonl")
     poems = load_jsonl(poem_path, limit)
     labels = load_labels(name, label_dir, limit)
     return poems, labels
+
+
+def load_labeled(name, kind, label_dir=None, limit=0):
+    poems = load_jsonl(os.path.join(POEM_DIR, name + ".jsonl"))
+    by_id, by_index = label_map(name, label_dir)
+    data = []
+    labs = []
+    for i, x in enumerate(poems):
+        if not same_kind(x, kind):
+            continue
+        lab = by_id.get(x.get("id", ""))
+        if lab is None:
+            lab = by_index.get(i)
+        if lab is None:
+            continue
+        data.append(x)
+        labs.append(lab)
+        if limit and len(data) >= limit:
+            break
+    return data, labs

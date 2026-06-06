@@ -45,17 +45,15 @@ def label_need():
         path = config.label_path(split, config.LLM_DIR)
         if not os.path.exists(path):
             print("缺少 LLM 真实标签:", path)
-            print("先用 llm_label.py 生成待标注文件，再由大模型逐条填写 dataset/llm_labels。")
+            print("先由 LLM 逐条阅读并填写 dataset/llm_labels。")
             raise SystemExit(1)
 
 
 def get_xy(split, kind, standard, limit):
-    poems, labels = config.load_split(split, label_dir=config.LLM_DIR)
+    poems, labels = config.load_labeled(split, kind, config.LLM_DIR, 0)
     data = []
     y = []
     for x, lab in zip(poems, labels):
-        if not config.same_kind(x, kind):
-            continue
         yy = lab.get(standard, "")
         if yy == "" or yy == "N/A":
             continue

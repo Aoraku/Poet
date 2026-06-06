@@ -1,142 +1,167 @@
 # Poet
 
-机器学习概论大作业。数据用唐诗、宋诗、宋词两套任务面：诗和词都做分类、聚类和生成，宋词另外加词牌和词风。
+机器学习概论大作业。项目分两套数据和两套逻辑：
 
-代码尽量写得朴素一点：爬虫直接爬，分类器和聚类器直接调用 sklearn / kmedoids，特征也用人工关键词、格式、作者先验、韵脚、平仄和 word2vec 拼起来。
+- 诗：唐诗、宋诗。
+- 词：宋词，有词牌、词风、小令/中调/长调。
 
-## 环境
+分类、聚类、生成都要先选 `poem` 还是 `ci`。不能把诗和词混在一起跑。
 
-进入项目目录：
+## 0. 现在的标签约定
+
+`dataset/llm_labels` 是唯一真实标签目录。这个目录里的标签必须是大语言模型逐首阅读后填写的结果。
+
+如果没有 `dataset/llm_labels/train_labels.jsonl` 和 `dataset/llm_labels/test_labels.jsonl`，`classifier.py` 和 `cluster.py` 会直接停止，不会偷偷使用规则标签。
+
+## 1. 环境
 
 ```bash
 cd C:\Users\liuqi\Desktop\机器学习概论\Poet
-```
-
-需要的库：
-
-```bash
 pip install requests beautifulsoup4 opencc-python-reimplemented pypinyin scikit-learn scipy numpy kmedoids gensim streamlit
 ```
 
-数据、模型、结果都放在 `dataset/` 里。这个目录不进 git。根目录 `report.md` 也不进 git。
+## 2. 数据
 
-## 运行顺序
-
-第一次完整跑：
+第一次爬数据：
 
 ```bash
 python crawler.py
-python label.py
-python word2vec.py --limit 120000 --size 50 --epochs 5
-python cluster.py --standard all --method all --limit 300
-python cluster.py --standard all --method all --limit 300 --use_w2v
-python classifier.py --standard all --train_limit 3000 --test_limit 1000 --use_w2v
 ```
 
-如果只是试一下爬虫，可以少爬几个文件：
+少量测试：
 
 ```bash
 python crawler.py --max_file 2
 ```
 
-启动界面：
-
-```bash
-streamlit run app.py
-```
-
-打开 Streamlit 给出的本地地址，一般是 `http://localhost:8501`。
-
-## 文件说明
-
-`.gitignore`
-
-忽略爬下来的数据、中间结果、模型、图片、根目录 `report.md` 和 Python 缓存，避免把几百 MB 数据推到 git。
-
-`classification_research.md`
-
-分类标准调研。里面解释诗和词分别按什么划分，后面的 `label.py` 和 `config.py` 都按这份标准写。
-
-`crawler.py`
-
-爬全唐诗、全宋诗、全宋词，也保存平水韵、中华新韵、词牌字数表和每个字的平仄表。最后随机打乱，按 8:1:1 写成：
+输出：
 
 ```text
 dataset/poems/train.jsonl
 dataset/poems/vaid.jsonl
 dataset/poems/test.jsonl
+dataset/rhyme/cipai_len.json
+dataset/tone/char_tone.json
 ```
 
-每条数据大概有 `kind/title/cipai/author/paragraphs/content/tone/source`。
+## 3. LLM 真实标签
 
-`label.py`
-
-给每首诗词打弱标签。它不是人工真值，只是 LLM/人工规则辅助标签，后面分类器先把它当 true label 用。输出：
-
-```text
-dataset/labels/train_labels.jsonl
-dataset/labels/vaid_labels.jsonl
-dataset/labels/test_labels.jsonl
-```
-
-标签字段是：
-
-```text
-theme, season, festival, emotion, style, ci_style, form, rhyme, tone
-```
-
-没有明显证据就写 `N/A`。
-
-`config.py`
-
-特征文件。这里记录分类、聚类用的人工权重和特征生成方式。诗用题材、季节、节日、情感、诗风、体裁、韵脚、平仄、作者先验；词在这些之外，加词风、词牌、词牌字数和词牌句数。
-
-`cluster.py`
-
-聚类实验。直接调用：
-
-```text
-KMeans, KMedoids, PAM, AgglomerativeClustering, BisectingKMeans
-```
-
-例子：
+生成待标注文件：
 
 ```bash
-python cluster.py --standard theme --method kmeans --limit 300
-python cluster.py --standard ci_style --method all --limit 300 --use_w2v
+python llm_label.py --make --split train --kind poem --start 0 --limit 50
+python llm_label.py --make --split train --kind ci --start 0 --limit 50
+```
+
+输出在：
+
+```text
+dataset/llm_todo/poem_train_0.jsonl
+dataset/llm_todo/ci_train_0.jsonl
+```
+
+这里面的 `theme/season/festival/emotion/style/ci_style/form` 需要由 LLM 逐首阅读后填写。每一条都要看原文，能归入类别就归入类别，只有真的落不到任何类别时才写 `N/A`。填完后的标签放到：
+
+```text
+dataset/llm_labels/train_labels.jsonl
+dataset/llm_labels/vaid_labels.jsonl
+dataset/llm_labels/test_labels.jsonl
+```
+
+检查标签数量：
+
+```bash
+python llm_label.py --check --kind poem
+python llm_label.py --check --kind ci
+```
+
+`label.py` 只保存分类标准、诗体判断、韵脚和平仄辅助函数，不负责自动标注。
+
+## 4. 分类命令行
+
+诗分类实验：
+
+```bash
+python classifier.py --kind poem --standard all --model all --train_limit 3000 --test_limit 1000 --save
+```
+
+词分类实验：
+
+```bash
+python classifier.py --kind ci --standard all --model all --train_limit 3000 --test_limit 1000 --save
+```
+
+只跑一个标准、一个模型：
+
+```bash
+python classifier.py --kind poem --standard theme --model SVM
+python classifier.py --kind ci --standard ci_style --model Tree
+```
+
+命令行输入一首诗并分类：
+
+```bash
+python classifier.py --predict --kind poem --model best --standard all --text "君过秋浦正逢秋，亦到枞阳皖水头。九派先将明月去，三峰少为白云留。"
+```
+
+命令行输入一首词并分类：
+
+```bash
+python classifier.py --predict --kind ci --cipai 浣溪沙 --model best --standard all --text "一曲新词酒一杯，去年天气旧亭台。夕阳西下几时回。"
+```
+
+`--model best` 会按当前设置选默认最好模型。也可以换成：
+
+```text
+KNN, WKNN, Bayes, SVM, Tree,
+Bagging_KNN, Bagging_WKNN, Bagging_Bayes, Bagging_SVM, Bagging_Tree,
+AdaBoost_Bayes, AdaBoost_SVM, AdaBoost_Tree
+```
+
+分类输出字段：
+
+- 诗：`theme/season/festival/emotion/style/form`
+- 词：`theme/season/festival/emotion/style/ci_style/form`
+
+## 5. 聚类命令行
+
+诗聚类：
+
+```bash
+python cluster.py --kind poem --standard all --method all --limit 300
+```
+
+词聚类：
+
+```bash
+python cluster.py --kind ci --standard all --method all --limit 300
+```
+
+只跑一个聚类算法：
+
+```bash
+python cluster.py --kind poem --standard theme --method kmeans --limit 300
+python cluster.py --kind ci --standard ci_style --method pam --limit 300
+```
+
+可选方法：
+
+```text
+kmeans, kmedoids, pam, agglomerative, bisect
 ```
 
 结果写到：
 
 ```text
-dataset/results/clusters/*.json
-dataset/results/clusters/summary.md
+dataset/results/clusters/poem_*.json
+dataset/results/clusters/ci_*.json
+dataset/results/clusters/summary_poem.md
+dataset/results/clusters/summary_ci.md
 ```
 
-JSON 里有 `acc/f1/silhouette/cluster_names/clusters`。`cluster_names` 是按簇里最多的真实弱标签给簇贴的名字。
+聚类只用来验证算法能不能逼近 LLM 分类结果。每个簇会按簇内最多的 LLM 标签贴一个名字，再计算 `acc/f1/silhouette`。
 
-`classifier.py`
-
-分类实验。直接调用：
-
-```text
-KNN, weighted KNN, Naive Bayes, SVM, Decision Tree
-Bagging_KNN, Bagging_WKNN, Bagging_Bayes, Bagging_SVM, Bagging_Tree
-AdaBoost_Bayes, AdaBoost_SVM, AdaBoost_Tree
-```
-
-例子：
-
-```bash
-python classifier.py --standard all --train_limit 3000 --test_limit 1000
-python classifier.py --standard all --train_limit 3000 --test_limit 1000 --use_w2v
-```
-
-它会训练、测试，然后把表写到根目录 `report.md`。这个文件被 gitignore 了。
-
-`generator.py`
-
-朴素生成器。诗按小句生成，词按词牌字数表拆成小句生成。模型主要是字级 bigram/马尔科夫，加一点 beam search 和韵脚限制。
+## 6. 生成命令行
 
 生成诗：
 
@@ -150,89 +175,49 @@ python generator.py --kind poem --form 七言绝句 --theme 山水田园 --emoti
 python generator.py --kind ci --cipai 浣溪沙 --ci_style 婉约清丽 --emotion 离愁别绪 --word 月,柳
 ```
 
-结果会打印在终端，也会写到：
+生成器按小句生成，不把整首诗当成一个长字符串。
 
-```text
-dataset/results/generate_sample.txt
+## 7. Word2Vec
+
+训练：
+
+```bash
+python word2vec.py --limit 120000 --size 50 --epochs 5
 ```
 
-`word2vec.py`
+然后用 embedding 重跑分类/聚类：
 
-用所有诗词小句训练字级 word2vec。训练后模型在：
-
-```text
-dataset/models/word2vec.model
+```bash
+python classifier.py --kind poem --standard all --model all --use_w2v
+python cluster.py --kind ci --standard all --method all --use_w2v
 ```
 
-相似字例子写到：
+## 8. App
 
-```text
-dataset/results/embedding_report.md
+启动：
+
+```bash
+streamlit run app.py
 ```
 
-`app.py`
+页面：
 
-简单 Streamlit 界面，有三个页面：
+- 分类：先选诗/词，再填文本。词要填词牌。默认 `best` 分类器，也可以手动换模型和分类标准。
+- 诗词大全：先选诗/词，再按分类标准和标签筛选作品。
+- 生成：先选诗/词。诗选诗体；词填词牌；可填题材、情感、风格、韵脚、关键词。
+- 报告：看分类实验报告和诗/词各自的聚类表。
 
-- 分类：输入一首诗或词，返回标签和相似作品。
-- 已有结果：看训练集标签分布和聚类摘要。
-- 生成：按体裁、题材、情感、风格、词牌、韵脚、关键词生成诗词。
+如果没有 `dataset/llm_labels`，分类页和诗词大全页会提示缺少 LLM 标签。
 
-## 人工输入时填什么
+## 9. 文件说明
 
-在界面“分类”页：
-
-- 如果输入诗，`词牌` 留空，只填 `文本`。
-- 如果输入词，`词牌` 填词牌名，比如 `浣溪沙`，再填 `文本`。
-
-返回的是一个 JSON：
-
-```text
-kind: tang_poem 或 song_ci
-theme: 题材
-season: 季节
-festival: 节日
-emotion: 情感
-style: 诗风
-ci_style: 词风，只有词会尽量判断
-form: 诗体或小令/中调/长调
-rhyme: 末字韵母
-tone: 末字平仄
-```
-
-同页还会返回几首相似作品，包含 `score/title/author/kind/content`。
-
-注意：当前界面人工输入走的是 `label.py` 的规则标签，不是 `classifier.py` 里 KNN/SVM/决策树那些离线实验模型。`classifier.py` 现在主要用于跑测试集指标。
-
-## 分类标准
-
-诗的分类标准：
-
-- 题材：山水田园、边塞征战、送别留赠、羁旅思乡、咏史怀古、咏物言志、爱情闺怨、忧国民生、酬唱宴游、哲理咏怀、祝颂应制、悼亡祭奠。
-- 时令节日：春、夏、秋、冬、节令；春节元日、元宵上元、寒食清明、端午、七夕、中秋、重阳、除夕岁暮。
-- 情感：离愁别绪、思乡怀人、悲慨忧愤、闲适淡泊、豪迈昂扬、爱慕怨情、忧国伤时、喜悦赞美、孤寂清冷。
-- 诗风：雄浑豪放、冲淡闲远、清新自然、绮丽纤秾、沉郁悲慨、高古典雅、含蓄委曲、飘逸旷达、劲健洗炼。
-- 形式：五言绝句、七言绝句、五言律诗、七言律诗、古体长篇、杂言乐府、其他。
-- 其他：韵脚、末字平仄、作者先验。
-
-词的分类标准：
-
-- 题材、时令、节日、情感也用上面的标准。
-- 词风单独分：婉约清丽、豪放慷慨、清空骚雅、沉郁悲慨、典雅工丽、自然疏淡、俚俗谐趣。
-- 形式分：小令、中调、长调。
-- 词牌特征：词牌名、词牌常见字数、词牌句数。
-- 其他：韵脚、末字平仄、作者先验。
-
-## 当前结果文件
-
-现在已有的主要结果：
-
-```text
-dataset/results/clusters/*.json
-dataset/results/clusters/summary.md
-dataset/results/embedding_report.md
-dataset/results/generate_sample.txt
-report.md
-```
-
-更详细的统计和实验结果见根目录 `report.md`，但它不会被 git 追踪。
+- `crawler.py`：爬数据，切 train/vaid/test。
+- `llm_label.py`：生成待 LLM 标注文件，检查 LLM 标签是否齐全。
+- `label.py`：分类标准和格式辅助函数，不自动生成 true label。
+- `config.py`：诗/词分类标准、特征、路径。
+- `classifier.py`：按诗/词分别训练、测试、预测。
+- `cluster.py`：按诗/词分别聚类并和 LLM 标签比较。
+- `generator.py`：按诗/词分别生成。
+- `word2vec.py`：训练字级 embedding。
+- `app.py`：前端。
+- `report.md`：本地报告，不进 git。

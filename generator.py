@@ -46,7 +46,11 @@ def get_need(args):
 
 
 def load_data(args):
-    poems, labels = config.load_split("train", limit=0)
+    if os.path.exists(config.label_path("train", config.LLM_DIR)):
+        poems, labels = config.load_labeled("train", args.kind, config.LLM_DIR)
+    else:
+        poems = config.load_jsonl(os.path.join(config.POEM_DIR, "train.jsonl"))
+        labels = [{} for x in poems]
     data = []
     for x, lab in zip(poems, labels):
         if args.kind == "poem" and x.get("kind") == "song_ci":
