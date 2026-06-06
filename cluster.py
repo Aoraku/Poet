@@ -4,8 +4,8 @@ import os
 import random
 from collections import Counter
 
-import numpy as np
 import kmedoids
+import numpy as np
 from scipy.sparse import hstack
 from sklearn.cluster import AgglomerativeClustering, BisectingKMeans, KMeans
 from sklearn.feature_extraction import DictVectorizer
@@ -27,13 +27,23 @@ def mkdir(path):
         os.makedirs(path)
 
 
+def label_need():
+    path = config.label_path("train", config.LLM_DIR)
+    if not os.path.exists(path):
+        print("缺少 LLM 真实标签:", path)
+        print("聚类评估必须和 dataset/llm_labels 比，不能用规则标签。")
+        raise SystemExit(1)
+
+
 def text_of(x):
-    return x.get("title", "") + " " + x.get("author", "") + " " + x.get("content", "")
+    return x.get("title", "") + " " + x.get("author", "") + " " + x.get("cipai", "") + " " + x.get("content", "")
 
 
-def k_num(standard):
+def k_num(kind, standard):
     if standard == "form":
-        return 10
+        if kind == "ci":
+            return 3
+        return 7
     if standard == "ci_style":
         return len(config.CATEGORY["ci_style"])
     if standard in config.CATEGORY:
@@ -48,30 +58,31 @@ def need_key(key, standard):
         return True
     if key.startswith("author_"):
         return True
-    if key in ["num_char", "num_line", "avg_len", "five_ratio", "seven_ratio"]:
+    if key.startswith("cipai_"):
         return True
-    if standard == "ci_style" and key.startswith("cipai_"):
+    if key in ["num_char", "num_line", "avg_len", "five_ratio", "seven_ratio", "cipai_len", "cipai_line"]:
         return True
     return False
 
 
-def load_data(split, standard, kind, limit):
-    poems, labels = config.load_split(split, limit=0)
+def load_data(split, kind, standard, limit):
+    poems, labels = config.load_split(split, label_dir=config.LLM_DIR)
     data = []
     y = []
     for x, lab in zip(poems, labels):
-        if kind != "all" and x.get("kind") != kind:
+        if not config.same_kind(x, kind):
             continue
-        if standard == "ci_style" and x.get("kind") != "song_ci":
+        yy = lab.get(standard, "")
+        if yy == "" or yy == "N/A":
             continue
         data.append(x)
-        y.append(lab.get(standard, "N/A"))
+        y.append(yy)
         if limit and len(data) >= limit:
             break
     return data, y
 
 
-def build_x(data, standard, use_w2v=False):
+def build_x(data, standard, use_w2v):
     tone_data = config.load_json(config.TONE_FILE)
     w2v = config.load_w2v() if use_w2v else None
     feat_list = []
@@ -82,13 +93,11 @@ def build_x(data, standard, use_w2v=False):
             if need_key(k, standard):
                 feat[k] = v
         feat_list.append(feat)
-
     vec = DictVectorizer()
     x1 = vec.fit_transform(feat_list)
-    text = [text_of(x) for x in data]
     tfidf = TfidfVectorizer(analyzer="char", max_features=300)
-    x2 = tfidf.fit_transform(text)
-    return hstack([x1, x2]), vec, tfidf
+    x2 = tfidf.fit_transform([text_of(x) for x in data])
+    return hstack([x1, x2])
 
 
 def run_kmeans(x, k):
@@ -106,7 +115,7 @@ def run_agglom(x, k):
     return model.fit_predict(x.toarray())
 
 
-def run_medoids(x, k, pam=False):
+def run_medoids(x, k, pam):
     arr = x.toarray()
     dist = pairwise_distances(arr, metric="euclidean")
     if pam:
@@ -122,7 +131,7 @@ def name_cluster(labels, y, k):
     for i in range(k):
         cnt = Counter()
         for lab, yy in zip(labels, y):
-            if lab == i and yy != "N/A":
+            if lab == i:
                 cnt[yy] += 1
         if cnt:
             names.append(cnt.most_common(1)[0][0])
@@ -131,23 +140,11 @@ def name_cluster(labels, y, k):
     return names
 
 
-def pred_label(labels, names):
-    return [names[x] for x in labels]
-
-
-def eval_cluster(y, pred):
-    y2 = []
-    p2 = []
-    for a, b in zip(y, pred):
-        if a == "N/A":
-            continue
-        y2.append(a)
-        p2.append(b)
-    if not y2:
-        return 0, 0
-    acc = accuracy_score(y2, p2)
-    f1 = f1_score(y2, p2, average="macro", zero_division=0)
-    return acc, f1
+def eval_res(y, labels, names):
+    pred = [names[x] for x in labels]
+    acc = accuracy_score(y, pred)
+    f1 = f1_score(y, pred, average="macro", zero_division=0)
+    return acc, f1, pred
 
 
 def top_words(data, labels, k):
@@ -170,34 +167,33 @@ def top_words(data, labels, k):
     return result
 
 
-def run_one(standard, method, split, kind, limit, use_w2v):
-    data, y = load_data(split, standard, kind, limit)
-    x, vec, tfidf = build_x(data, standard, use_w2v)
-    k = k_num(standard)
+def run_one(kind, standard, method, split, limit, use_w2v):
+    data, y = load_data(split, kind, standard, limit)
+    x = build_x(data, standard, use_w2v)
+    k = k_num(kind, standard)
     if k > len(data):
         k = len(data)
 
     if method == "kmeans":
         labels = run_kmeans(x, k)
     elif method == "kmedoids":
-        labels = run_medoids(x, k, pam=False)
+        labels = run_medoids(x, k, False)
     elif method == "pam":
-        labels = run_medoids(x, k, pam=True)
+        labels = run_medoids(x, k, True)
     elif method == "agglomerative":
         labels = run_agglom(x, k)
     else:
         labels = run_bisect(x, k)
 
     names = name_cluster(labels, y, k)
-    pred = pred_label(labels, names)
-    acc, f1 = eval_cluster(y, pred)
+    acc, f1, pred = eval_res(y, labels, names)
     sil = silhouette_score(x, labels, sample_size=min(800, len(data)), random_state=RANDOM_SEED)
 
     out = {
+        "kind": kind,
         "standard": standard,
         "method": method,
         "split": split,
-        "kind": kind,
         "limit": len(data),
         "use_w2v": use_w2v,
         "k": k,
@@ -207,21 +203,19 @@ def run_one(standard, method, split, kind, limit, use_w2v):
         "cluster_names": names,
         "clusters": top_words(data, labels, k),
     }
-
     mkdir(RESULT_DIR)
     mark = "_w2v" if use_w2v else ""
-    path = os.path.join(RESULT_DIR, standard + "_" + method + mark + ".json")
+    path = os.path.join(RESULT_DIR, kind + "_" + standard + "_" + method + mark + ".json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
-
-    print(standard, method, "acc", round(acc, 4), "f1", round(f1, 4), "sil", round(sil, 4))
+    print(kind, standard, method, "acc", round(acc, 4), "f1", round(f1, 4), "sil", round(sil, 4))
     return out
 
 
-def write_summary(results):
-    path = os.path.join(RESULT_DIR, "summary.md")
+def write_summary(kind, results):
+    path = os.path.join(RESULT_DIR, "summary_" + kind + ".md")
     with open(path, "w", encoding="utf-8") as f:
-        f.write("# 聚类结果\n\n")
+        f.write("# 聚类结果 " + kind + "\n\n")
         for x in results:
             f.write(f"## {x['standard']} / {x['method']}\n\n")
             f.write(f"- acc: {x['acc']:.4f}\n")
@@ -232,17 +226,18 @@ def write_summary(results):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--kind", default="poem", choices=["poem", "ci"])
     parser.add_argument("--standard", default="theme")
     parser.add_argument("--method", default="all")
     parser.add_argument("--split", default="train")
-    parser.add_argument("--kind", default="all")
     parser.add_argument("--limit", type=int, default=1200)
     parser.add_argument("--use_w2v", action="store_true")
     args = parser.parse_args()
 
+    label_need()
     standards = [args.standard]
     if args.standard == "all":
-        standards = ["theme", "season", "emotion", "style", "ci_style"]
+        standards = config.kind_std(args.kind)
 
     methods = [args.method]
     if args.method == "all":
@@ -251,9 +246,9 @@ def main():
     results = []
     for standard in standards:
         for method in methods:
-            res = run_one(standard, method, args.split, args.kind, args.limit, args.use_w2v)
+            res = run_one(args.kind, standard, method, args.split, args.limit, args.use_w2v)
             results.append(res)
-    write_summary(results)
+    write_summary(args.kind, results)
 
 
 if __name__ == "__main__":
