@@ -204,7 +204,26 @@ python classifier.py --kind poem --standard all --model all --use_w2v
 python cluster.py --kind ci --standard all --method all --use_w2v
 ```
 
-## 8. App
+## 8. 全量重跑
+
+拿到全部 LLM 标签后，用这个命令重新跑分类和聚类：
+
+```bash
+python run_all.py --cluster_limit 1200
+```
+
+它会先检查 `train/vaid/test` 的诗和词标签数量。没齐就只打印缺多少，不会跑。
+
+分类会跑普通特征和 word2vec 特征两套：
+
+```text
+dataset/results/classifier_report.md
+dataset/results/classifier_report_w2v.md
+```
+
+聚类也会跑诗、词、普通特征、word2vec 特征。`cluster_limit` 是聚类采样上限，因为 PAM、K-medoids、凝聚聚类不能直接吃几十万首。
+
+## 9. App
 
 启动：
 
@@ -221,7 +240,7 @@ streamlit run app.py
 
 如果没有 `dataset/llm_labels`，分类页和诗词大全页会提示缺少 LLM 标签。
 
-## 9. 文件说明
+## 10. 文件说明
 
 - `crawler.py`：爬数据，切 train/vaid/test。
 - `llm_label.py`：生成待 LLM 标注文件，检查 LLM 标签是否齐全。
@@ -231,5 +250,6 @@ streamlit run app.py
 - `cluster.py`：按诗/词分别聚类并和 LLM 标签比较。
 - `generator.py`：按诗/词分别生成。
 - `word2vec.py`：训练字级 embedding。
+- `run_all.py`：标签齐全后重跑分类和聚类。
 - `app.py`：前端。
 - `report.md`：本地报告，不进 git。

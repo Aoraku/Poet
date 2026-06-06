@@ -174,6 +174,12 @@ def eval_one(y, pred):
     return acc, precision, recall, f1
 
 
+def report_file(use_w2v):
+    if use_w2v:
+        return os.path.join(config.RESULT_DIR, "classifier_report_w2v.md")
+    return os.path.join(config.RESULT_DIR, "classifier_report.md")
+
+
 def train_pack(kind, standard, model_name, train_limit, use_w2v):
     model_name = pick_model(model_name, standard)
     train, y_train = get_xy("train", kind, standard, train_limit)
@@ -246,7 +252,8 @@ def run_one(kind, standard, model_name, train_limit, test_limit, use_w2v, save):
 
 def write_report(rows, train_limit, test_limit, use_w2v):
     config.mkdir(config.RESULT_DIR)
-    with open(REPORT_FILE, "w", encoding="utf-8") as f:
+    path = report_file(use_w2v)
+    with open(path, "w", encoding="utf-8") as f:
         f.write("# 分类实验报告\n\n")
         f.write("true label 只读取 dataset/llm_labels，由大模型逐条阅读后填写。\n\n")
         f.write(f"train_limit = {train_limit}, test_limit = {test_limit}\n\n")

@@ -127,11 +127,14 @@ def show_count(kind, field):
 
 
 def show_cls():
-    path = classifier.REPORT_FILE
-    if os.path.exists(path):
-        st.markdown(open(path, "r", encoding="utf-8").read())
-    else:
-        st.write("还没有分类报告")
+    for use_w2v in [False, True]:
+        path = classifier.report_file(use_w2v)
+        name = "word2vec" if use_w2v else "base"
+        st.write(name)
+        if os.path.exists(path):
+            st.markdown(open(path, "r", encoding="utf-8").read())
+        else:
+            st.write("还没有分类报告")
 
 
 def show_cluster(kind):
