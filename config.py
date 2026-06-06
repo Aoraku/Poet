@@ -10,6 +10,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "dataset")
 POEM_DIR = os.path.join(DATA_DIR, "poems")
 LABEL_DIR = os.path.join(DATA_DIR, "labels")
+RULE_DIR = os.path.join(DATA_DIR, "rule_labels")
+LLM_DIR = os.path.join(DATA_DIR, "llm_labels")
 MODEL_DIR = os.path.join(DATA_DIR, "models")
 RESULT_DIR = os.path.join(DATA_DIR, "results")
 TONE_FILE = os.path.join(DATA_DIR, "tone", "char_tone.json")
@@ -26,6 +28,9 @@ CATEGORY = {
     "style": STYLE,
     "ci_style": CI_STYLE,
 }
+
+POEM_STD = ["theme", "season", "festival", "emotion", "style", "form"]
+CI_STD = ["theme", "season", "festival", "emotion", "style", "ci_style", "form"]
 
 # 人工权重
 POEM_WEIGHT = {
@@ -63,6 +68,48 @@ COMMON_CIPAI = [
     "虞美人", "江城子", "卜算子", "如梦令", "声声慢", "雨霖铃",
     "永遇乐", "摸鱼儿", "踏莎行", "渔家傲", "南乡子", "点绛唇",
 ]
+
+
+def norm_kind(kind):
+    if kind in ["诗", "poem", "tang_poem", "song_poem"]:
+        return "poem"
+    if kind in ["词", "ci", "song_ci"]:
+        return "ci"
+    return "all"
+
+
+def same_kind(x, kind):
+    kind = norm_kind(kind)
+    if kind == "all":
+        return True
+    if kind == "poem":
+        return x.get("kind") != "song_ci"
+    if kind == "ci":
+        return x.get("kind") == "song_ci"
+    return True
+
+
+def kind_std(kind):
+    kind = norm_kind(kind)
+    if kind == "ci":
+        return list(CI_STD)
+    return list(POEM_STD)
+
+
+def make_input(kind, text, cipai=""):
+    kind = norm_kind(kind)
+    if kind == "ci":
+        real_kind = "song_ci"
+    else:
+        real_kind = "tang_poem"
+    return {
+        "id": "",
+        "kind": real_kind,
+        "title": "输入",
+        "author": "",
+        "cipai": cipai,
+        "content": text,
+    }
 
 # 作者先验
 AUTHOR_THEME = {
@@ -297,9 +344,18 @@ def build_feat(x, tone_data=None, w2v=None):
     return poem_feat(x, tone_data, w2v)
 
 
-def load_split(name, limit=0):
+def label_path(name, label_dir=None):
+    label_dir = label_dir or LLM_DIR
+    return os.path.join(label_dir, name + "_labels.jsonl")
+
+
+def load_labels(name, label_dir=None, limit=0):
+    path = label_path(name, label_dir)
+    return load_jsonl(path, limit)
+
+
+def load_split(name, limit=0, label_dir=None):
     poem_path = os.path.join(POEM_DIR, name + ".jsonl")
-    label_path = os.path.join(LABEL_DIR, name + "_labels.jsonl")
     poems = load_jsonl(poem_path, limit)
-    labels = load_jsonl(label_path, limit)
+    labels = load_labels(name, label_dir, limit)
     return poems, labels
