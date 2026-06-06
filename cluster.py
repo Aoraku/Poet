@@ -71,11 +71,12 @@ def load_data(split, standard, kind, limit):
     return data, y
 
 
-def build_x(data, standard):
+def build_x(data, standard, use_w2v=False):
     tone_data = config.load_json(config.TONE_FILE)
+    w2v = config.load_w2v() if use_w2v else None
     feat_list = []
     for x in data:
-        raw = config.build_feat(x, tone_data)
+        raw = config.build_feat(x, tone_data, w2v)
         feat = {}
         for k, v in raw.items():
             if need_key(k, standard):
@@ -169,9 +170,9 @@ def top_words(data, labels, k):
     return result
 
 
-def run_one(standard, method, split, kind, limit):
+def run_one(standard, method, split, kind, limit, use_w2v):
     data, y = load_data(split, standard, kind, limit)
-    x, vec, tfidf = build_x(data, standard)
+    x, vec, tfidf = build_x(data, standard, use_w2v)
     k = k_num(standard)
     if k > len(data):
         k = len(data)
@@ -198,6 +199,7 @@ def run_one(standard, method, split, kind, limit):
         "split": split,
         "kind": kind,
         "limit": len(data),
+        "use_w2v": use_w2v,
         "k": k,
         "acc": acc,
         "f1": f1,
@@ -207,7 +209,8 @@ def run_one(standard, method, split, kind, limit):
     }
 
     mkdir(RESULT_DIR)
-    path = os.path.join(RESULT_DIR, standard + "_" + method + ".json")
+    mark = "_w2v" if use_w2v else ""
+    path = os.path.join(RESULT_DIR, standard + "_" + method + mark + ".json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
 
@@ -234,6 +237,7 @@ def main():
     parser.add_argument("--split", default="train")
     parser.add_argument("--kind", default="all")
     parser.add_argument("--limit", type=int, default=1200)
+    parser.add_argument("--use_w2v", action="store_true")
     args = parser.parse_args()
 
     standards = [args.standard]
@@ -247,7 +251,7 @@ def main():
     results = []
     for standard in standards:
         for method in methods:
-            res = run_one(standard, method, args.split, args.kind, args.limit)
+            res = run_one(standard, method, args.split, args.kind, args.limit, args.use_w2v)
             results.append(res)
     write_summary(results)
 

@@ -42,10 +42,11 @@ def get_xy(split, standard, limit, kind):
     return data, y
 
 
-def build_x(train, test):
+def build_x(train, test, use_w2v=False):
     tone_data = config.load_json(config.TONE_FILE)
-    train_feat = [config.build_feat(x, tone_data) for x in train]
-    test_feat = [config.build_feat(x, tone_data) for x in test]
+    w2v = config.load_w2v() if use_w2v else None
+    train_feat = [config.build_feat(x, tone_data, w2v) for x in train]
+    test_feat = [config.build_feat(x, tone_data, w2v) for x in test]
 
     vec = DictVectorizer()
     x1 = vec.fit_transform(train_feat)
@@ -123,12 +124,12 @@ def eval_one(y, pred):
     return acc, precision, recall, f1
 
 
-def run_standard(standard, train_limit, test_limit, kind):
+def run_standard(standard, train_limit, test_limit, kind, use_w2v):
     if standard == "ci_style":
         kind = "song_ci"
     train, y_train = get_xy("train", standard, train_limit, kind)
     test, y_test = get_xy("test", standard, test_limit, kind)
-    x_train, x_test = build_x(train, test)
+    x_train, x_test = build_x(train, test, use_w2v)
 
     result = []
     models = build_models()
@@ -143,11 +144,12 @@ def run_standard(standard, train_limit, test_limit, kind):
     return result, len(train), len(test)
 
 
-def write_report(all_result, train_limit, test_limit):
+def write_report(all_result, train_limit, test_limit, use_w2v):
     with open(REPORT_FILE, "w", encoding="utf-8") as f:
         f.write("# 分类实验报告\n\n")
         f.write("true label 使用 label.py 生成的 LLM/人工规则辅助标签。\n\n")
         f.write(f"train_limit = {train_limit}, test_limit = {test_limit}\n\n")
+        f.write(f"use_w2v = {use_w2v}\n\n")
         f.write("AdaBoost 没有套 KNN/WKNN，因为 KNN 不支持 AdaBoost 需要的样本权重更新。\n\n")
 
         for standard, info in all_result.items():
@@ -167,6 +169,7 @@ def main():
     parser.add_argument("--train_limit", type=int, default=3000)
     parser.add_argument("--test_limit", type=int, default=1000)
     parser.add_argument("--kind", default="all")
+    parser.add_argument("--use_w2v", action="store_true")
     args = parser.parse_args()
 
     standards = [args.standard]
@@ -175,9 +178,9 @@ def main():
 
     all_result = {}
     for standard in standards:
-        rows, n_train, n_test = run_standard(standard, args.train_limit, args.test_limit, args.kind)
+        rows, n_train, n_test = run_standard(standard, args.train_limit, args.test_limit, args.kind, args.use_w2v)
         all_result[standard] = (rows, n_train, n_test)
-    write_report(all_result, args.train_limit, args.test_limit)
+    write_report(all_result, args.train_limit, args.test_limit, args.use_w2v)
 
 
 if __name__ == "__main__":

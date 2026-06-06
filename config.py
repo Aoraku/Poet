@@ -14,6 +14,7 @@ MODEL_DIR = os.path.join(DATA_DIR, "models")
 RESULT_DIR = os.path.join(DATA_DIR, "results")
 TONE_FILE = os.path.join(DATA_DIR, "tone", "char_tone.json")
 CIPAI_FILE = os.path.join(DATA_DIR, "rhyme", "cipai_len.json")
+W2V_FILE = os.path.join(MODEL_DIR, "word2vec.model")
 
 RANDOM_SEED = 42
 
@@ -232,7 +233,31 @@ def add_cipai(feat, x, weight):
     feat["cipai_line"] = cut(len(pattern), 20)
 
 
-def poem_feat(x, tone_data=None):
+def add_w2v(feat, x, w2v):
+    if w2v is None:
+        return
+    chars = [ch for ch in only_ch(x.get("content", "")) if ch in w2v.wv]
+    if not chars:
+        return
+    vec = None
+    for ch in chars:
+        if vec is None:
+            vec = w2v.wv[ch].copy()
+        else:
+            vec += w2v.wv[ch]
+    vec = vec / len(chars)
+    for i, v in enumerate(vec):
+        feat["w2v_" + str(i)] = float((v + 1) / 2)
+
+
+def load_w2v(path=W2V_FILE):
+    if not os.path.exists(path):
+        return None
+    from gensim.models import Word2Vec
+    return Word2Vec.load(path)
+
+
+def poem_feat(x, tone_data=None, w2v=None):
     tone_data = tone_data or {}
     text = x.get("title", "") + " " + x.get("author", "") + " " + x.get("content", "")
     feat = {}
@@ -244,10 +269,11 @@ def poem_feat(x, tone_data=None):
     add_form(feat, x, POEM_WEIGHT["form"])
     add_rhyme(feat, x, tone_data, POEM_WEIGHT["rhyme"])
     add_author(feat, x, POEM_WEIGHT["author"])
+    add_w2v(feat, x, w2v)
     return feat
 
 
-def ci_feat(x, tone_data=None):
+def ci_feat(x, tone_data=None, w2v=None):
     tone_data = tone_data or {}
     text = x.get("title", "") + " " + x.get("cipai", "") + " " + x.get("author", "") + " " + x.get("content", "")
     feat = {}
@@ -261,13 +287,14 @@ def ci_feat(x, tone_data=None):
     add_rhyme(feat, x, tone_data, CI_WEIGHT["rhyme"])
     add_author(feat, x, CI_WEIGHT["author"])
     add_cipai(feat, x, CI_WEIGHT["cipai"])
+    add_w2v(feat, x, w2v)
     return feat
 
 
-def build_feat(x, tone_data=None):
+def build_feat(x, tone_data=None, w2v=None):
     if x.get("kind") == "song_ci":
-        return ci_feat(x, tone_data)
-    return poem_feat(x, tone_data)
+        return ci_feat(x, tone_data, w2v)
+    return poem_feat(x, tone_data, w2v)
 
 
 def load_split(name, limit=0):
