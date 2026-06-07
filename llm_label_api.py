@@ -83,6 +83,11 @@ def ask_label(x, kind, idx, args):
         try:
             return ask_api(make_prompt(x, kind, idx), args)
         except Exception as e:
+            if hasattr(e, "response") and e.response is not None:
+                code = e.response.status_code
+                if code == 401 or code == 403:
+                    print("bad key", code)
+                    os._exit(1)
             print("retry", kind, idx, str(e)[:80])
             time.sleep(args.wait)
 

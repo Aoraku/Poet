@@ -75,7 +75,7 @@ python llm_label_api.py --split train --kind ci --fresh --limit 0 --model gemini
 从头重标全部诗和词：
 
 ```bash
-python llm_label_api.py --split all --kind all --fresh --limit 0 --model gemini-3-flash-preview --workers 6
+python llm_label_api.py --split all --kind all --fresh --limit 0 --model gemini-3-flash-preview --workers 2
 ```
 
 断点继续时不要加 `--fresh`：
