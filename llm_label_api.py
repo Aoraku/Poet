@@ -2,6 +2,8 @@ import argparse
 import json
 import os
 import time
+from queue import Queue
+from threading import Lock, Thread
 
 import requests
 from tqdm import tqdm
@@ -74,6 +76,15 @@ def ask_api(prompt, args):
     r.raise_for_status()
     msg = r.json()["choices"][0]["message"]["content"]
     return read_json(msg)
+
+
+def ask_label(x, kind, idx, args):
+    while True:
+        try:
+            return ask_api(make_prompt(x, kind, idx), args)
+        except Exception as e:
+            print("retry", kind, idx, str(e)[:80])
+            time.sleep(args.wait)
 
 
 def read_json(text):
@@ -203,13 +214,12 @@ def todo_num(args, split, kind):
     return n
 
 
-def run_one(args, split, kind, bar):
+def todo_list(args, split, kind):
     poems = config.load_jsonl(os.path.join(config.POEM_DIR, split + ".jsonl"))
     path = config.label_path(split, config.LLM_DIR)
     tone_data = config.load_json(config.TONE_FILE)
     rows, ids, idxs = old_rows(path, kind, False)
-    config.mkdir(os.path.dirname(path))
-    out = open(path, "a", encoding="utf-8")
+    data = []
     n = 0
     pos = -1
     for idx, x in enumerate(poems):
@@ -220,34 +230,67 @@ def run_one(args, split, kind, bar):
             continue
         if x.get("id", "") in ids or idx in idxs:
             continue
-        raw = ask_api(make_prompt(x, kind, idx), args)
-        lab = fix_lab(raw, x, kind, idx, tone_data)
-        out.write(json.dumps(lab, ensure_ascii=False, separators=(",", ":")) + "\n")
-        out.flush()
-        ids.add(lab["id"])
-        idxs.add(idx)
+        data.append((split, kind, idx, pos, x))
         n += 1
+        if args.limit and n >= args.limit:
+            break
+    return data
+
+
+def write_lab(path, lab, lock):
+    config.mkdir(os.path.dirname(path))
+    with lock:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(lab, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def work(q, args, tone_data, locks, bar):
+    while True:
+        item = q.get()
+        if item is None:
+            q.task_done()
+            break
+        split, kind, idx, pos, x = item
+        raw = ask_label(x, kind, idx, args)
+        lab = fix_lab(raw, x, kind, idx, tone_data)
+        path = config.label_path(split, config.LLM_DIR)
+        write_lab(path, lab, locks[path])
         bar.set_description(split + " " + kind)
         bar.set_postfix_str(lab["title"][:12])
         bar.update(1)
-        if args.limit and n >= args.limit:
-            break
         if args.sleep:
             time.sleep(args.sleep)
-    out.close()
-    print("done", split, kind, n)
+        q.task_done()
 
 
 def run_many(args):
     tasks = get_tasks(args)
     if args.fresh:
         clear_old(tasks)
-    total = 0
+    items = []
     for split, kind in tasks:
-        total += todo_num(args, split, kind)
+        now = todo_list(args, split, kind)
+        print(split, kind, len(now))
+        items += now
+    total = len(items)
+    q = Queue()
+    for x in items:
+        q.put(x)
+    for i in range(args.workers):
+        q.put(None)
+    paths = set([config.label_path(x[0], config.LLM_DIR) for x in items])
+    locks = {}
+    for path in paths:
+        locks[path] = Lock()
+    tone_data = config.load_json(config.TONE_FILE)
     bar = tqdm(total=total, ncols=100)
-    for split, kind in tasks:
-        run_one(args, split, kind, bar)
+    ths = []
+    for i in range(args.workers):
+        t = Thread(target=work, args=(q, args, tone_data, locks, bar))
+        t.start()
+        ths.append(t)
+    for t in ths:
+        t.join()
     bar.close()
     print("all done", total)
 
@@ -262,6 +305,8 @@ def main():
     parser.add_argument("--model", default=MODEL)
     parser.add_argument("--base", default=BASE_URL)
     parser.add_argument("--sleep", type=float, default=0.0)
+    parser.add_argument("--wait", type=float, default=5.0)
+    parser.add_argument("--workers", type=int, default=1)
     args = parser.parse_args()
     run_many(args)
 
