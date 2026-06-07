@@ -4,6 +4,7 @@ import os
 import time
 
 import requests
+from tqdm import tqdm
 
 import config
 from label import guess_form, rhyme_label, tone_label
@@ -11,6 +12,8 @@ from label import guess_form, rhyme_label, tone_label
 
 BASE_URL = "https://litellm.nbdevenv.xiaoaojianghu.fun"
 MODEL = "gemini-3-flash-preview"
+SPLITS = ["train", "vaid", "test"]
+KINDS = ["poem", "ci"]
 
 
 def label_opts(kind):
@@ -139,43 +142,120 @@ def old_rows(path, kind, fresh):
     return rows, ids, idxs
 
 
-def run_one(args):
-    poems = config.load_jsonl(os.path.join(config.POEM_DIR, args.split + ".jsonl"))
-    path = config.label_path(args.split, config.LLM_DIR)
-    tone_data = config.load_json(config.TONE_FILE)
-    rows, ids, idxs = old_rows(path, args.kind, args.fresh)
-    config.mkdir(os.path.dirname(path))
-    out = open(path, "a", encoding="utf-8")
+def get_tasks(args):
+    if args.split == "all":
+        splits = SPLITS
+    else:
+        splits = [args.split]
+    if args.kind == "all":
+        kinds = KINDS
+    else:
+        kinds = [args.kind]
+    tasks = []
+    for split in splits:
+        for kind in kinds:
+            tasks.append((split, kind))
+    return tasks
+
+
+def clear_old(tasks):
+    by_split = {}
+    for split, kind in tasks:
+        by_split.setdefault(split, set()).add(kind)
+    for split, kinds in by_split.items():
+        path = config.label_path(split, config.LLM_DIR)
+        if not os.path.exists(path):
+            continue
+        if "poem" in kinds and "ci" in kinds:
+            os.remove(path)
+            print("clear", path)
+            continue
+        rows = config.load_jsonl(path)
+        keep = []
+        for x in rows:
+            drop = False
+            for kind in kinds:
+                if config.same_kind(x, kind):
+                    drop = True
+            if not drop:
+                keep.append(x)
+        save_rows(path, keep)
+        print("clear", path)
+
+
+def todo_num(args, split, kind):
+    poems = config.load_jsonl(os.path.join(config.POEM_DIR, split + ".jsonl"))
+    path = config.label_path(split, config.LLM_DIR)
+    rows, ids, idxs = old_rows(path, kind, False)
     n = 0
     pos = -1
     for idx, x in enumerate(poems):
-        if not config.same_kind(x, args.kind):
+        if not config.same_kind(x, kind):
             continue
         pos += 1
         if pos < args.start:
             continue
         if x.get("id", "") in ids or idx in idxs:
             continue
-        raw = ask_api(make_prompt(x, args.kind, idx), args)
-        lab = fix_lab(raw, x, args.kind, idx, tone_data)
+        n += 1
+        if args.limit and n >= args.limit:
+            break
+    return n
+
+
+def run_one(args, split, kind, bar):
+    poems = config.load_jsonl(os.path.join(config.POEM_DIR, split + ".jsonl"))
+    path = config.label_path(split, config.LLM_DIR)
+    tone_data = config.load_json(config.TONE_FILE)
+    rows, ids, idxs = old_rows(path, kind, False)
+    config.mkdir(os.path.dirname(path))
+    out = open(path, "a", encoding="utf-8")
+    n = 0
+    pos = -1
+    for idx, x in enumerate(poems):
+        if not config.same_kind(x, kind):
+            continue
+        pos += 1
+        if pos < args.start:
+            continue
+        if x.get("id", "") in ids or idx in idxs:
+            continue
+        raw = ask_api(make_prompt(x, kind, idx), args)
+        lab = fix_lab(raw, x, kind, idx, tone_data)
         out.write(json.dumps(lab, ensure_ascii=False, separators=(",", ":")) + "\n")
         out.flush()
         ids.add(lab["id"])
         idxs.add(idx)
         n += 1
-        print(args.split, args.kind, pos, lab["title"], n)
+        bar.set_description(split + " " + kind)
+        bar.set_postfix_str(lab["title"][:12])
+        bar.update(1)
         if args.limit and n >= args.limit:
             break
         if args.sleep:
             time.sleep(args.sleep)
     out.close()
-    print("done", args.split, args.kind, n)
+    print("done", split, kind, n)
+
+
+def run_many(args):
+    tasks = get_tasks(args)
+    if args.fresh:
+        clear_old(tasks)
+    total = 0
+    for split, kind in tasks:
+        total += todo_num(args, split, kind)
+    bar = tqdm(total=total, ncols=100)
+    for split, kind in tasks:
+        run_one(args, split, kind, bar)
+    bar.close()
+    print("all done", total)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--split", default="train", choices=["train", "vaid", "test"])
-    parser.add_argument("--kind", default="poem", choices=["poem", "ci"])
+    parser.add_argument("--split", default="train", choices=["train", "vaid", "test", "all"])
+    parser.add_argument("--kind", default="poem", choices=["poem", "ci", "all"])
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--fresh", action="store_true")
@@ -183,7 +263,7 @@ def main():
     parser.add_argument("--base", default=BASE_URL)
     parser.add_argument("--sleep", type=float, default=0.0)
     args = parser.parse_args()
-    run_one(args)
+    run_many(args)
 
 
 if __name__ == "__main__":

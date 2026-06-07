@@ -72,6 +72,12 @@ python llm_label_api.py --split train --kind ci --fresh --limit 0 --model gemini
 
 `--fresh` 会删掉当前 split 里同一种类的旧标签，只保留另一种。比如 `--kind poem --fresh` 只删诗标签，不删词标签。`--limit 0` 表示一直跑到这个 split 结束。
 
+从头重标全部诗和词：
+
+```bash
+python llm_label_api.py --split all --kind all --fresh --limit 0 --model gemini-3-flash-preview
+```
+
 断点继续时不要加 `--fresh`：
 
 ```bash
