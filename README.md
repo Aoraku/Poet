@@ -46,7 +46,45 @@ dataset/tone/char_tone.json
 
 ## 3. LLM 真实标签
 
-生成待标注文件：
+现在真实标签用 LiteLLM API 逐首标。key 不写在代码里，先在命令行里设环境变量：
+
+```bash
+set LITELLM_KEY=你的key
+```
+
+PowerShell 用：
+
+```bash
+$env:LITELLM_KEY="你的key"
+```
+
+从头重标一份诗的 train：
+
+```bash
+python llm_label_api.py --split train --kind poem --fresh --limit 0 --model gemini-3-flash-preview
+```
+
+从头重标一份词的 train：
+
+```bash
+python llm_label_api.py --split train --kind ci --fresh --limit 0 --model gemini-3-flash-preview
+```
+
+`--fresh` 会删掉当前 split 里同一种类的旧标签，只保留另一种。比如 `--kind poem --fresh` 只删诗标签，不删词标签。`--limit 0` 表示一直跑到这个 split 结束。
+
+断点继续时不要加 `--fresh`：
+
+```bash
+python llm_label_api.py --split train --kind poem --limit 0
+```
+
+少量检查：
+
+```bash
+python llm_label_api.py --split test --kind ci --limit 3
+```
+
+旧的 `llm_label.py` 只用来生成待标注文件和检查数量：
 
 ```bash
 python llm_label.py --make --split train --kind poem --start 0 --limit 50
@@ -244,6 +282,7 @@ streamlit run app.py
 
 - `crawler.py`：爬数据，切 train/vaid/test。
 - `llm_label.py`：生成待 LLM 标注文件，检查 LLM 标签是否齐全。
+- `llm_label_api.py`：调用 LiteLLM API 逐首生成 true label。
 - `label.py`：分类标准和格式辅助函数，不自动生成 true label。
 - `config.py`：诗/词分类标准、特征、路径。
 - `classifier.py`：按诗/词分别训练、测试、预测。
