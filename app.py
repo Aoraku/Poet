@@ -206,14 +206,20 @@ with tab2:
 with tab3:
     kind_name = st.radio("生成体裁", ["诗", "词"], horizontal=True)
     kind = kind_val(kind_name)
-    form = st.selectbox("诗体", ["七言绝句", "五言绝句", "七言律诗", "五言律诗"])
-    cipai = st.text_input("词牌 ", "浣溪沙" if kind == "ci" else "")
     theme = st.selectbox("题材", [""] + list(config.THEME.keys()))
     emotion = st.selectbox("情感", [""] + list(config.EMOTION.keys()))
-    style = st.selectbox("诗风", [""] + list(config.STYLE.keys()))
-    ci_style = st.selectbox("词风", [""] + list(config.CI_STYLE.keys()))
+    if kind == "poem":
+        form = st.selectbox("诗体", ["七言绝句", "五言绝句", "七言律诗", "五言律诗"])
+        style = st.selectbox("诗风", [""] + list(config.STYLE.keys()))
+        cipai = ""
+        ci_style = ""
+    else:
+        form = "七言绝句"
+        cipai = st.text_input("词牌", "浣溪沙")
+        style = st.selectbox("风格", [""] + list(config.STYLE.keys()))
+        ci_style = st.selectbox("词风", [""] + list(config.CI_STYLE.keys()))
     rhyme = st.text_input("韵脚", "")
-    word = st.text_input("关键词", "")
+    word = st.text_input("必含词", "")
     limit = st.number_input("语料数", min_value=1000, max_value=30000, value=8000, step=1000)
     if st.button("生成"):
         args = make_args(kind, form, theme, emotion, style, ci_style, cipai, rhyme, word, int(limit))
